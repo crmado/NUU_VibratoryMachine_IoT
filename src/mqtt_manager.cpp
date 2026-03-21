@@ -40,7 +40,9 @@ static void publish_status()
     dtostrf(voltage, 4, 2, vbuf); // ESP8266 printf %f 不穩，用 dtostrf
     String payload = "{\"run\":" + String(opto_get_run() ? "true" : "false") +
                      ",\"speed\":" + String(dac_get_percent()) +
-                     ",\"voltage\":" + String(vbuf) + "}";
+                     ",\"voltage\":" + String(vbuf) +
+                     ",\"raw\":" + String(dac_get_raw()) +
+                     ",\"dac_ok\":" + String(dac_is_ok() ? "true" : "false") + "}";
     _mqtt->publish(topic("status").c_str(), payload.c_str(), true);
 }
 
@@ -126,6 +128,7 @@ void mqtt_manager_init()
         _mqtt = new PubSubClient(*_wifi_client);
 
     _wifi_client->setInsecure(); // 跳過憑證驗證（TLS 加密但不驗 CA）
+    _mqtt->setBufferSize(512);   // 預設 128 bytes 不夠，含長 topic 需要更大緩衝
     _mqtt->setServer(_host.c_str(), _port);
     _mqtt->setCallback(on_message);
     Serial.printf("[MQTT] Broker=%s:%d  user=%s\n", _host.c_str(), _port, _user.c_str());
