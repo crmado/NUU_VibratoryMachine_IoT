@@ -11,60 +11,67 @@
  */
 
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Preferences.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include "config.h"
+#include "config_store.h"
 #include "wifi_manager.h"
 #include "dac_controller.h"
 #include "opto_controller.h"
 #include "web_handler.h"
 #include "mqtt_manager.h"
 
-WebServer   server(80);
-Preferences preferences;
+ESP8266WebServer server(80);
 
 // ── 硬體重置按鈕（BOOT 鍵長按 3 秒）──────────────────────────
 static unsigned long _btn_press_time = 0;
-static bool          _btn_armed      = false;
+static bool _btn_armed = false;
 
-static void check_reset_button() {
+static void check_reset_button()
+{
     bool pressed = (digitalRead(RESET_BUTTON_PIN) == LOW);
-    if (pressed && !_btn_armed) {
-        _btn_armed      = true;
+    if (pressed && !_btn_armed)
+    {
+        _btn_armed = true;
         _btn_press_time = millis();
-    } else if (!pressed) {
+    }
+    else if (!pressed)
+    {
         _btn_armed = false;
-    } else if (_btn_armed && (millis() - _btn_press_time > RESET_HOLD_MS)) {
+    }
+    else if (_btn_armed && (millis() - _btn_press_time > RESET_HOLD_MS))
+    {
         Serial.println("[SYS] BOOT 按鈕長按 → 清除所有設定 → 重啟");
-        preferences.begin(NVS_NAMESPACE, false);
-        preferences.clear();
-        preferences.end();
+        config_store_clear();
         ESP.restart();
     }
 }
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n=== NUU Vibratory Machine IoT ===");
+    Serial.println("\n=== NUU Vibratory Machine IoT (ESP8266) ===");
 
     pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
 
+    config_store_init();
     dac_init();
     opto_init();
 
-    wifi_manager_init(&preferences, &server);
+    wifi_manager_init(&server);
     web_handler_init(&server);
     server.begin();
     Serial.println("[Web] HTTP Server 啟動");
 
-    if (wifi_manager_is_connected()) {
-        mqtt_manager_init(&preferences);
+    if (wifi_manager_is_connected())
+    {
+        mqtt_manager_init();
     }
 }
 
-void loop() {
+void loop()
+{
     check_reset_button();
     server.handleClient();
     wifi_manager_loop();

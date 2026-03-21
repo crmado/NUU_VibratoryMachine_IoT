@@ -3,12 +3,12 @@
 #include "opto_controller.h"
 #include "mqtt_manager.h"
 #include "wifi_manager.h"
+#include "config_store.h"
 #include "config.h"
 #include <Arduino.h>
-#include <Preferences.h>
-#include <WiFi.h>
+#include <ESP8266WiFi.h>
 
-static WebServer* _server = nullptr;
+static ESP8266WebServer *_server = nullptr;
 
 static const char CONTROL_PAGE[] PROGMEM = R"rawhtml(
 <!DOCTYPE html>
@@ -119,33 +119,34 @@ setInterval(refreshStatus, 5000);
 </html>
 )rawhtml";
 
-void web_handler_init(WebServer* server) {
-    _server = server;
+void web_handler_init(ESP8266WebServer *server)
+{
+  _server = server;
 
-    _server->on("/", HTTP_GET, []() {
-        _server->send_P(200, "text/html; charset=utf-8", CONTROL_PAGE);
-    });
+  _server->on("/", HTTP_GET, []()
+              { _server->send_P(200, "text/html; charset=utf-8", CONTROL_PAGE); });
 
-    // GET /api/run?v=1|0
-    _server->on("/api/run", HTTP_GET, []() {
+  // GET /api/run?v=1|0
+  _server->on("/api/run", HTTP_GET, []()
+              {
         bool run = _server->arg("v") == "1";
         opto_set_run(run);
         String json = "{\"run\":" + String(run ? "true" : "false") +
                       ",\"speed\":" + String(dac_get_percent()) + "}";
-        _server->send(200, "application/json", json);
-    });
+        _server->send(200, "application/json", json); });
 
-    // GET /api/speed?v=0-100
-    _server->on("/api/speed", HTTP_GET, []() {
+  // GET /api/speed?v=0-100
+  _server->on("/api/speed", HTTP_GET, []()
+              {
         uint8_t spd = (uint8_t)constrain(_server->arg("v").toInt(), 0, 100);
         dac_set_percent(spd);
         String json = "{\"run\":" + String(opto_get_run() ? "true" : "false") +
                       ",\"speed\":" + String(spd) + "}";
-        _server->send(200, "application/json", json);
-    });
+        _server->send(200, "application/json", json); });
 
-    // GET /api/status
-    _server->on("/api/status", HTTP_GET, []() {
+  // GET /api/status
+  _server->on("/api/status", HTTP_GET, []()
+              {
         String mac = WiFi.macAddress();
         mac.replace(":", "");
         mac = mac.substring(6);
@@ -156,21 +157,17 @@ void web_handler_init(WebServer* server) {
                       ",\"ip\":\""   + wifi_manager_get_ip() + "\"" +
                       ",\"wifi\":\"" + WiFi.SSID() + "\"" +
                       ",\"mac\":\""  + mac + "\"}";
-        _server->send(200, "application/json", json);
-    });
+        _server->send(200, "application/json", json); });
 
-    // GET /reset — 清除所有設定，重啟進 AP 模式
-    _server->on("/reset", HTTP_GET, []() {
+  // GET /reset — 清除所有設定，重啟進 AP 模式
+  _server->on("/reset", HTTP_GET, []()
+              {
         _server->send(200, "text/html; charset=utf-8",
             "<html><head><meta charset='UTF-8'></head>"
             "<body style='font-family:sans-serif;padding:24px'>"
             "<h2>重設中...</h2><p>請重新連線熱點 <b>" AP_SSID "</b></p>"
             "</body></html>");
         delay(1000);
-        Preferences prefs;
-        prefs.begin(NVS_NAMESPACE, false);
-        prefs.clear();
-        prefs.end();
-        ESP.restart();
-    });
+        config_store_clear();
+        ESP.restart(); });
 }

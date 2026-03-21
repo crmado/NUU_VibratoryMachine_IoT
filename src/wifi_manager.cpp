@@ -1,40 +1,15 @@
 #include "wifi_manager.h"
+#include "config_store.h"
 #include "config.h"
 #include <Arduino.h>
+#include <ESP8266WiFi.h>
 
-static Preferences* _prefs     = nullptr;
-static WebServer*   _server    = nullptr;
-static bool         _is_ap_mode = false;
-
-// ── NVS 讀寫 ──────────────────────────────────────────────────
-static String load_str(const char* key, const char* def = "") {
-    _prefs->begin(NVS_NAMESPACE, true);
-    String v = _prefs->getString(key, def);
-    _prefs->end();
-    return v;
-}
-
-static void save_str(const char* key, const String& val) {
-    _prefs->begin(NVS_NAMESPACE, false);
-    _prefs->putString(key, val);
-    _prefs->end();
-}
-
-static void save_int(const char* key, int val) {
-    _prefs->begin(NVS_NAMESPACE, false);
-    _prefs->putInt(key, val);
-    _prefs->end();
-}
-
-static void clear_all() {
-    _prefs->begin(NVS_NAMESPACE, false);
-    _prefs->clear();
-    _prefs->end();
-    Serial.println("[WiFi] 所有設定已清除");
-}
+static ESP8266WebServer *_server = nullptr;
+static bool _is_ap_mode = false;
 
 // ── AP 模式設定頁面 ────────────────────────────────────────────
-static void start_ap_mode() {
+static void start_ap_mode()
+{
     WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
 
@@ -49,7 +24,8 @@ static void start_ap_mode() {
     Serial.printf("  URL     : http://%s\n", AP_IP);
 
     // ── 設定頁面（WiFi + MQTT）──────────────────────────────────
-    _server->on("/", HTTP_GET, []() {
+    _server->on("/", HTTP_GET, []()
+                {
         String html = R"rawhtml(
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -102,30 +78,38 @@ static void start_ap_mode() {
 </body>
 </html>
 )rawhtml";
-        _server->send(200, "text/html; charset=utf-8", html);
-    });
+        _server->send(200, "text/html; charset=utf-8", html); });
 
     // ── 接收並儲存所有設定 ──────────────────────────────────────
-    _server->on("/save", HTTP_POST, []() {
+    _server->on("/save", HTTP_POST, []()
+                {
         String ssid = _server->arg("ssid");
         if (ssid.isEmpty()) {
             _server->send(400, "text/plain", "WiFi SSID 不能為空");
             return;
         }
 
-        save_str(NVS_KEY_SSID, ssid);
-        save_str(NVS_KEY_PASS, _server->arg("pass"));
+        AppConfig c;
+        memset(&c, 0, sizeof(c));
+        c.magic = CONFIG_MAGIC;
+        ssid.toCharArray(c.ssid, sizeof(c.ssid));
+        _server->arg("pass").toCharArray(c.pass, sizeof(c.pass));
 
         String mqttHost = _server->arg("mqtt_host");
         if (!mqttHost.isEmpty()) {
-            save_str(NVS_KEY_MQTT_HOST, mqttHost);
-            save_int(NVS_KEY_MQTT_PORT, _server->arg("mqtt_port").toInt());
-            save_str(NVS_KEY_MQTT_USER, _server->arg("mqtt_user"));
-            save_str(NVS_KEY_MQTT_PASS, _server->arg("mqtt_pass"));
+            mqttHost.toCharArray(c.mqtt_host, sizeof(c.mqtt_host));
+            c.mqtt_port = (uint16_t)_server->arg("mqtt_port").toInt();
+            _server->arg("mqtt_user").toCharArray(c.mqtt_user, sizeof(c.mqtt_user));
+            _server->arg("mqtt_pass").toCharArray(c.mqtt_pass, sizeof(c.mqtt_pass));
+        } else {
+            String(MQTT_DEFAULT_HOST).toCharArray(c.mqtt_host, sizeof(c.mqtt_host));
+            c.mqtt_port = MQTT_DEFAULT_PORT;
+            String(MQTT_DEFAULT_USER).toCharArray(c.mqtt_user, sizeof(c.mqtt_user));
+            String(MQTT_DEFAULT_PASS).toCharArray(c.mqtt_pass, sizeof(c.mqtt_pass));
         }
+        config_store_save(c);
 
-        Serial.printf("[WiFi] 已儲存 SSID=%s, MQTT=%s\n",
-                      ssid.c_str(), mqttHost.isEmpty() ? "未設定" : mqttHost.c_str());
+        Serial.printf("[WiFi] 已儲存 SSID=%s\n", ssid.c_str());
 
         _server->send(200, "text/html; charset=utf-8",
             "<html><head><meta charset='UTF-8'></head><body style='font-family:sans-serif;max-width:400px;margin:40px auto;padding:16px'>"
@@ -134,19 +118,21 @@ static void start_ap_mode() {
             "<p>連上後請在路由器查詢裝置 IP，或查看 Serial Monitor。</p>"
             "</body></html>");
         delay(3000);
-        ESP.restart();
-    });
+        ESP.restart(); });
 }
 
 // ── STA 連線 ──────────────────────────────────────────────────
-static bool connect_sta(const String& ssid, const String& pass) {
+static bool connect_sta(const String &ssid, const String &pass)
+{
     Serial.printf("[WiFi] 連線中: %s\n", ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
 
     unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - start > WIFI_CONNECT_TIMEOUT_MS) {
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        if (millis() - start > WIFI_CONNECT_TIMEOUT_MS)
+        {
             Serial.println("\n[WiFi] 連線逾時");
             return false;
         }
@@ -160,37 +146,45 @@ static bool connect_sta(const String& ssid, const String& pass) {
 }
 
 // ── 公開 API ─────────────────────────────────────────────────
-void wifi_manager_init(Preferences* prefs, WebServer* server) {
-    _prefs  = prefs;
+void wifi_manager_init(ESP8266WebServer *server)
+{
     _server = server;
 
-    String ssid = load_str(NVS_KEY_SSID);
-    String pass = load_str(NVS_KEY_PASS);
-
-    if (ssid.isEmpty()) {
+    AppConfig c = config_store_load();
+    if (!config_store_valid(c) || strlen(c.ssid) == 0)
+    {
         Serial.println("[WiFi] 無儲存設定 → AP 模式");
         start_ap_mode();
         return;
     }
 
-    if (!connect_sta(ssid, pass)) {
+    if (!connect_sta(String(c.ssid), String(c.pass)))
+    {
         Serial.println("[WiFi] 連線失敗 → 清除設定 → AP 模式");
-        clear_all();
+        config_store_clear();
         start_ap_mode();
     }
 }
 
-void wifi_manager_loop() {
-    if (!_is_ap_mode && WiFi.status() != WL_CONNECTED) {
+void wifi_manager_loop()
+{
+    if (!_is_ap_mode && WiFi.status() != WL_CONNECTED)
+    {
         Serial.println("[WiFi] 斷線，重試中...");
-        connect_sta(load_str(NVS_KEY_SSID), load_str(NVS_KEY_PASS));
+        AppConfig c = config_store_load();
+        if (config_store_valid(c))
+        {
+            connect_sta(String(c.ssid), String(c.pass));
+        }
     }
 }
 
-bool wifi_manager_is_connected() {
+bool wifi_manager_is_connected()
+{
     return !_is_ap_mode && WiFi.status() == WL_CONNECTED;
 }
 
-String wifi_manager_get_ip() {
+String wifi_manager_get_ip()
+{
     return _is_ap_mode ? String(AP_IP) : WiFi.localIP().toString();
 }
