@@ -17,7 +17,7 @@ ESP8266 (NodeMCU V3) 透過 MQTT 遠端控制 SDVC31 振動送料機控制器。
 
 ## NodeMCU V3 腳位圖
 
-![NodeMCU V3 Pinout](docs\img\nodemcu-v3-esp8266-development-board-pinout.jpeg)
+![NodeMCU V3 Pinout](docs/img/nodemcu-v3-esp8266-development-board-pinout.jpeg)
 
 ```
                       ┌──────────────┐
